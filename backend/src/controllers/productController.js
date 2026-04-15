@@ -23,9 +23,14 @@ const getProductById = async (req, res) => {
 };
 
 const createProduct = async (req, res) => {
+  console.log("BASE_URL:", process.env.BASE_URL); // 👈 ADD THIS LINE
+
   try {
     const { name, category, description, variants } = req.body;
-    const image = req.file ? `${process.env.BASE_URL}/uploads/${req.file.filename}` : undefined;
+    const image = req.file
+      ? `${process.env.BASE_URL}/uploads/${req.file.filename}`
+      : undefined;
+
     const product = await Product.create({
       name,
       category,
@@ -33,8 +38,10 @@ const createProduct = async (req, res) => {
       image,
       variants
     });
+
     res.status(201).json(product);
   } catch (error) {
+    console.log("ERROR:", error.message); // 👈 ALSO ADD THIS (very important)
     res.status(500).json({ message: error.message });
   }
 };
