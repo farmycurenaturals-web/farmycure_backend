@@ -1,21 +1,22 @@
 const express = require('express');
 const router = express.Router();
-const {
-  getProducts,
-  getFeaturedProducts,
-  getProductById,
-  createProduct,
-  updateProduct,
-  deleteProduct
-} = require('../controllers/productController');
-const { requireAuth, allowRoles } = require('../middleware/authMiddleware');
-const { uploadImage } = require('../middleware/upload');
+const multer = require('multer');
+const path = require('path');
+const { getProducts, getProductById, createProduct } = require('../controllers/productController');
 
-router.get('/featured', getFeaturedProducts);
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({ storage });
+
 router.get('/', getProducts);
 router.get('/:id', getProductById);
-router.post('/', requireAuth, allowRoles('admin', 'owner'), uploadImage.any(), createProduct);
-router.put('/:id', requireAuth, allowRoles('admin', 'owner'), uploadImage.any(), updateProduct);
-router.delete('/:id', requireAuth, allowRoles('admin', 'owner'), deleteProduct);
+router.post('/', upload.single('image'), createProduct);
 
 module.exports = router;

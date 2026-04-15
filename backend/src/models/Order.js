@@ -4,11 +4,7 @@ const orderSchema = new mongoose.Schema({
   user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: false
-  },
-  sessionId: {
-    type: String,
-    index: true
+    required: true
   },
   items: [
     {
@@ -28,15 +24,6 @@ const orderSchema = new mongoose.Schema({
       price: {
         type: Number,
         required: true
-      },
-      title: {
-        type: String
-      },
-      image: {
-        type: String
-      },
-      category: {
-        type: String
       }
     }
   ],
@@ -48,24 +35,18 @@ const orderSchema = new mongoose.Schema({
     type: String,
     default: 'pending'
   },
-  status: {
+  orderStatus: {
     type: String,
-    enum: ['Placed', 'Processing', 'Shipped', 'Delivered', 'Cancelled'],
-    default: 'Placed'
+    default: 'processing'
   },
   shippingAddress: {
-    type: mongoose.Schema.Types.Mixed,
+    type: String,
     required: true
-  },
-  razorpay: {
-    orderId: String,
-    paymentId: String,
-    signature: String
   },
   createdAt: {
     type: Date,
     default: Date.now
   }
-}, { timestamps: true });
+});
 
 module.exports = mongoose.model('Order', orderSchema);
