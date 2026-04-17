@@ -39,7 +39,11 @@ const createOrder = async (req, res) => {
 
 const getOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ user: req.user.id }).populate('items.productId');
+    const filter =
+      req.query.scope === 'all' && ['admin', 'owner'].includes(req.user.role)
+        ? {}
+        : { user: req.user.id };
+    const orders = await Order.find(filter).populate('items.productId').sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -59,4 +63,29 @@ const getOrderById = async (req, res) => {
   }
 };
 
-module.exports = { createOrder, getOrders, getOrderById };
+const updateOrder = async (req, res) => {
+  try {
+    const order = await Order.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    res.json(order);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const updateOrderStatus = async (req, res) => {
+  try {
+    const { status } = req.body;
+    const order = await Order.findByIdAndUpdate(
+      req.params.id,
+      { orderStatus: status || 'processing' },
+      { new: true }
+    );
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    res.json(order);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+module.exports = { createOrder, getOrders, getOrderById, updateOrder, updateOrderStatus };

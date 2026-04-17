@@ -2,11 +2,12 @@ const Contact = require('../models/Contact');
 
 const submitContactMessage = async (req, res) => {
   try {
-    const { name, email, message } = req.body;
+    const { name, email, subject, message } = req.body;
 
     const contact = await Contact.create({
       name,
       email,
+      subject,
       message
     });
 
@@ -16,4 +17,13 @@ const submitContactMessage = async (req, res) => {
   }
 };
 
-module.exports = { submitContactMessage };
+const getContactMessages = async (req, res) => {
+  try {
+    const contacts = await Contact.find({}).sort({ createdAt: -1 });
+    res.json(contacts);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+module.exports = { submitContactMessage, getContactMessages };

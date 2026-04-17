@@ -24,6 +24,33 @@ const partnerSchema = new mongoose.Schema({
   productsInterested: {
     type: String
   },
+  product: {
+    type: String
+  },
+  quantity: {
+    type: Number
+  },
+  timezone: {
+    type: String
+  },
+  preferredTime: {
+    type: String
+  },
+  contactMethod: {
+    type: String
+  },
+  legalName: {
+    type: String
+  },
+  gst: {
+    type: String
+  },
+  contact: {
+    type: String
+  },
+  name: {
+    type: String
+  },
   message: {
     type: String
   },

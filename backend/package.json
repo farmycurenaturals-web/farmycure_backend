@@ -18,7 +18,9 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.3.0",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "readable-stream": "^4.7.0",
+    "xtend": "^4.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
