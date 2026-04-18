@@ -31,10 +31,25 @@ const deleteAddress = async (req, res) => {
 const updateUserProfile = async (req, res) => {
   try {
     const updates = {};
-    if (req.body.name) updates.name = req.body.name;
-    if (req.body.email) updates.email = req.body.email;
+    if (req.body.name !== undefined) {
+      const n = String(req.body.name).trim();
+      if (n) updates.name = n;
+    }
+    if (req.body.email !== undefined) {
+      updates.email = String(req.body.email).trim().toLowerCase();
+    }
+    if (req.body.phone !== undefined) {
+      updates.phone = String(req.body.phone).trim();
+    }
+
+    if (Object.keys(updates).length === 0) {
+      const user = await User.findById(req.user.id).select('-password');
+      if (!user) return res.status(404).json({ message: 'User not found' });
+      return res.json(user);
+    }
 
     const user = await User.findByIdAndUpdate(req.user.id, updates, { new: true }).select('-password');
+    if (!user) return res.status(404).json({ message: 'User not found' });
     res.json(user);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -61,8 +76,20 @@ const changeUserPassword = async (req, res) => {
 };
 
 const updateProfileImage = async (req, res) => {
-  const image = req.file ? `${process.env.BASE_URL}/uploads/${req.file.filename}` : null;
-  res.json({ image });
+  try {
+    const image = req.file ? `${process.env.BASE_URL}/uploads/${req.file.filename}` : null;
+    if (!image) {
+      return res.status(400).json({ message: 'Image file is required' });
+    }
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { profileImage: image },
+      { new: true }
+    ).select('-password');
+    res.json({ image, user });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
 module.exports = {

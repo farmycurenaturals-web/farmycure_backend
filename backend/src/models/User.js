@@ -18,6 +18,15 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: 'user'
   },
+  phone: {
+    type: String,
+    default: '',
+    trim: true,
+  },
+  profileImage: {
+    type: String,
+    default: '',
+  },
   createdAt: {
     type: Date,
     default: Date.now

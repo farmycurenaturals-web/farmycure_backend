@@ -7,12 +7,23 @@ const categorySchema = new mongoose.Schema({
   },
   slug: {
     type: String,
-    required: true
+    required: true,
+    unique: true,
+    trim: true,
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  }
-});
+  categoryCode: {
+    type: String,
+    trim: true,
+    index: true,
+  },
+  description: {
+    type: String,
+    default: '',
+  },
+  image: {
+    type: String,
+    default: '',
+  },
+}, { timestamps: true });
 
 module.exports = mongoose.model('Category', categorySchema);
