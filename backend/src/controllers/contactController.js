@@ -1,4 +1,6 @@
 const Contact = require('../models/Contact');
+const { sendEmail } = require('../services/emailService');
+const { contactUserTemplate, contactAdminTemplate } = require('../services/emailTemplates');
 
 const submitContactMessage = async (req, res) => {
   try {
@@ -10,6 +12,24 @@ const submitContactMessage = async (req, res) => {
       subject,
       message
     });
+
+    const adminEmail = process.env.ADMIN_EMAIL;
+    const userMail = contactUserTemplate({ name, subject });
+    const adminMail = contactAdminTemplate({ name, email, subject, message });
+
+    try {
+      await sendEmail({ to: email, subject: userMail.subject, html: userMail.html });
+      if (adminEmail) {
+        await sendEmail({
+          to: adminEmail,
+          subject: adminMail.subject,
+          html: adminMail.html,
+          replyTo: email,
+        });
+      }
+    } catch (mailError) {
+      console.error('Contact emails failed:', mailError.message);
+    }
 
     res.status(201).json({ message: 'Message sent successfully', contact });
   } catch (error) {

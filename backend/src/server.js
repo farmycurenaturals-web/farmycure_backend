@@ -1,4 +1,8 @@
-require('dotenv').config({ override: true });
+const path = require('path');
+require('dotenv').config({
+  path: path.resolve(__dirname, '../.env'),
+  override: true,
+});
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
@@ -15,6 +19,8 @@ const categoryRoutes = require('./routes/categoryRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const userRoutes = require('./routes/userRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+const addressRoutes = require('./routes/addressRoutes');
+const healthRoutes = require('./routes/healthRoutes');
 
 const app = express();
 
@@ -68,6 +74,7 @@ app.get('/api/health', (req, res) => {
     database: dbConnected ? 'connected' : 'disconnected',
   });
 });
+app.use('/api/health', healthRoutes);
 
 app.use('/api', dbReadyMiddleware);
 
@@ -82,6 +89,7 @@ app.use('/api/contact', contactRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/address', addressRoutes);
 
 const PORT = process.env.PORT || 5000;
 

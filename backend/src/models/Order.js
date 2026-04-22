@@ -39,8 +39,12 @@ const orderSchema = new mongoose.Schema({
     type: String,
     default: 'processing'
   },
-  shippingAddress: {
+  trackingLink: {
     type: String,
+    default: ''
+  },
+  shippingAddress: {
+    type: mongoose.Schema.Types.Mixed,
     required: true
   },
   createdAt: {
