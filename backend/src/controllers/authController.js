@@ -17,8 +17,36 @@ const ADMIN_PASSWORD = 'mdfarmycure@123';
 const OTP_EXPIRY_MINUTES = Number(process.env.OTP_EXPIRY_MINUTES || 5);
 const RESET_TOKEN_EXPIRY_MINUTES = Number(process.env.RESET_TOKEN_EXPIRY_MINUTES || 15);
 const MAX_OTP_ATTEMPTS = 5;
+const DEFAULT_FRONTEND_URL = 'http://localhost:5173';
 const getGoogleClientId = () =>
   String(process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID || '').trim();
+const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo';
+const normalizeBaseUrl = (value) => String(value || '').trim().replace(/\/+$/, '');
+const getRequestOrigin = (req) => {
+  const candidates = [
+    req.get('origin'),
+    req.get('x-forwarded-origin'),
+    req.get('referer'),
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed = new URL(candidate);
+      return `${parsed.protocol}//${parsed.host}`;
+    } catch {
+      continue;
+    }
+  }
+  return '';
+};
+const buildResetLink = (req, rawToken) => {
+  const resetBase = normalizeBaseUrl(process.env.FRONTEND_RESET_URL);
+  const preferredBase = normalizeBaseUrl(process.env.FRONTEND_URL);
+  const requestBase = normalizeBaseUrl(getRequestOrigin(req));
+  const frontendBase = resetBase || preferredBase || requestBase || DEFAULT_FRONTEND_URL;
+  const encodedToken = encodeURIComponent(rawToken);
+  return `${frontendBase}/#/reset-password?token=${encodedToken}`;
+};
 
 const authResponse = (user, token) => ({
   _id: user._id,
@@ -119,6 +147,39 @@ const loginUser = async (req, res) => {
   }
 };
 
+const findOrCreateGoogleUser = async ({ email, name, picture, googleId }) => {
+  let user = await User.findOne({ email });
+  if (!user) {
+    const randomPassword = await bcrypt.hash(`${googleId}_${Date.now()}`, 10);
+    user = await User.create({
+      name: name || email.split('@')[0],
+      email,
+      password: randomPassword,
+      profileImage: picture,
+      googleId,
+    });
+    return user;
+  }
+
+  let shouldSave = false;
+  if (!user.googleId) {
+    user.googleId = googleId;
+    shouldSave = true;
+  }
+  if (picture && !user.profileImage) {
+    user.profileImage = picture;
+    shouldSave = true;
+  }
+  if (name && !user.name) {
+    user.name = name;
+    shouldSave = true;
+  }
+  if (shouldSave) {
+    await user.save();
+  }
+  return user;
+};
+
 const googleLogin = async (req, res) => {
   try {
     const { credential } = req.body;
@@ -147,35 +208,40 @@ const googleLogin = async (req, res) => {
       return res.status(400).json({ message: 'Invalid Google account data' });
     }
 
-    let user = await User.findOne({ email });
-    if (!user) {
-      const randomPassword = await bcrypt.hash(`${googleId}_${Date.now()}`, 10);
-      user = await User.create({
-        name: name || email.split('@')[0],
-        email,
-        password: randomPassword,
-        profileImage: picture,
-        googleId,
-      });
-    } else {
-      let shouldSave = false;
-      if (!user.googleId) {
-        user.googleId = googleId;
-        shouldSave = true;
-      }
-      if (picture && !user.profileImage) {
-        user.profileImage = picture;
-        shouldSave = true;
-      }
-      if (name && !user.name) {
-        user.name = name;
-        shouldSave = true;
-      }
-      if (shouldSave) {
-        await user.save();
-      }
+    const user = await findOrCreateGoogleUser({ email, name, picture, googleId });
+
+    const token = signAccessToken(user);
+    return res.json(authResponse(user, token));
+  } catch (error) {
+    return res.status(401).json({ message: 'Google authentication failed' });
+  }
+};
+
+const googleTokenLogin = async (req, res) => {
+  try {
+    const accessToken = String(req.body.accessToken || '').trim();
+    if (!accessToken) {
+      return res.status(400).json({ message: 'Google access token is required' });
     }
 
+    const profileResponse = await fetch(GOOGLE_USERINFO_URL, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!profileResponse.ok) {
+      return res.status(401).json({ message: 'Google authentication failed' });
+    }
+    const payload = await profileResponse.json();
+    const email = String(payload?.email || '').trim().toLowerCase();
+    const emailVerified = Boolean(payload?.email_verified);
+    const name = String(payload?.name || '').trim();
+    const picture = String(payload?.picture || '').trim();
+    const googleId = String(payload?.sub || '').trim();
+
+    if (!email || !googleId || !emailVerified) {
+      return res.status(400).json({ message: 'Invalid Google account data' });
+    }
+
+    const user = await findOrCreateGoogleUser({ email, name, picture, googleId });
     const token = signAccessToken(user);
     return res.json(authResponse(user, token));
   } catch (error) {
@@ -234,8 +300,7 @@ const forgotPassword = async (req, res) => {
       used: false,
     });
 
-    const frontendBase = String(process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
-    const resetLink = `${frontendBase}/reset-password/${rawToken}`;
+    const resetLink = buildResetLink(req, rawToken);
     const mail = passwordResetTemplate({ resetLink, expiresInMinutes: RESET_TOKEN_EXPIRY_MINUTES });
     const sendResult = await sendEmail({ to: email, subject: mail.subject, html: mail.html });
 
@@ -337,6 +402,10 @@ const buildOtpHash = (email, purpose, otp) =>
     .createHash('sha256')
     .update(`${String(email).toLowerCase()}|${purpose}|${otp}|${process.env.JWT_SECRET || 'farmycure_secret_key'}`)
     .digest('hex');
+const normalizeOtpCode = (value) =>
+  String(value || '')
+    .replace(/\D/g, '')
+    .slice(0, 6);
 
 const sendOtp = async (req, res) => {
   try {
@@ -382,37 +451,47 @@ const verifyOtp = async (req, res) => {
   try {
     const email = String(req.body.email || '').trim().toLowerCase();
     const purpose = normalizePurpose(req.body.purpose);
-    const otp = String(req.body.otp || '').trim();
+    const otp = normalizeOtpCode(req.body.otp);
 
     if (!email || !otp) {
       return res.status(400).json({ message: 'Email and OTP are required' });
     }
+    if (otp.length !== 6) {
+      return res.status(400).json({ message: 'OTP must be 6 digits' });
+    }
 
-    const record = await OtpToken.findOne({
+    const records = await OtpToken.find({
       email,
       purpose,
       used: false,
       expiresAt: { $gt: new Date() },
-    }).sort({ createdAt: -1 });
+    })
+      .sort({ createdAt: -1 })
+      .limit(5);
 
-    if (!record) {
+    if (!records.length) {
       return res.status(400).json({ message: 'OTP is invalid or expired' });
     }
 
     const expectedHash = buildOtpHash(email, purpose, otp);
-    if (record.codeHash !== expectedHash) {
-      record.attempts = Number(record.attempts || 0) + 1;
-      if (record.attempts >= MAX_OTP_ATTEMPTS) {
-        record.used = true;
-        record.usedAt = new Date();
+    const matchedRecord = records.find((entry) => entry.codeHash === expectedHash);
+
+    if (!matchedRecord) {
+      const latestRecord = records[0];
+      if (latestRecord) {
+        latestRecord.attempts = Number(latestRecord.attempts || 0) + 1;
+        if (latestRecord.attempts >= MAX_OTP_ATTEMPTS) {
+          latestRecord.used = true;
+          latestRecord.usedAt = new Date();
+        }
+        await latestRecord.save();
       }
-      await record.save();
       return res.status(400).json({ message: 'Invalid OTP' });
     }
 
-    record.used = true;
-    record.usedAt = new Date();
-    await record.save();
+    matchedRecord.used = true;
+    matchedRecord.usedAt = new Date();
+    await matchedRecord.save();
 
     if (purpose === 'login') {
       const user = await findUserByEmailForOtpLogin(email);
@@ -442,6 +521,7 @@ module.exports = {
   resetPassword,
   validateResetToken,
   googleLogin,
+  googleTokenLogin,
   sendOtp,
   verifyOtp,
 };

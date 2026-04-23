@@ -1,6 +1,16 @@
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Order = require('../models/Order');
+const Address = require('../models/Address');
+
+const sanitizeAddressPayload = (body = {}) => ({
+  name: String(body.name || '').trim(),
+  phone: String(body.phone || '').trim(),
+  address: String(body.address || '').trim(),
+  city: String(body.city || '').trim(),
+  state: String(body.state || '').trim(),
+  pincode: String(body.pincode || '').trim(),
+});
 
 const getUserOrders = async (req, res) => {
   try {
@@ -12,20 +22,94 @@ const getUserOrders = async (req, res) => {
 };
 
 const getUserAddresses = async (req, res) => {
-  // Address persistence is not available in current schema; return empty list for compatibility.
-  res.json([]);
+  try {
+    const addresses = await Address.find({ user: req.user.id }).sort({ isDefault: -1, createdAt: -1 });
+    res.json(addresses);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
 const createAddress = async (req, res) => {
-  res.status(201).json({ ...req.body, _id: `addr_${Date.now()}` });
+  try {
+    const payload = sanitizeAddressPayload(req.body);
+    const missingField = Object.entries(payload).find(([, value]) => !value)?.[0];
+    if (missingField) {
+      return res.status(400).json({ message: `${missingField} is required` });
+    }
+
+    const userId = req.user.id;
+    const hasExisting = (await Address.countDocuments({ user: userId })) > 0;
+    const isDefault = req.body.isDefault === true || !hasExisting;
+
+    if (isDefault) {
+      await Address.updateMany({ user: userId }, { $set: { isDefault: false } });
+    }
+
+    const address = await Address.create({
+      user: userId,
+      ...payload,
+      isDefault,
+    });
+
+    return res.status(201).json(address);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
 };
 
 const updateAddress = async (req, res) => {
-  res.json({ ...req.body, _id: req.params.id });
+  try {
+    const payload = sanitizeAddressPayload(req.body);
+    const missingField = Object.entries(payload).find(([, value]) => !value)?.[0];
+    if (missingField) {
+      return res.status(400).json({ message: `${missingField} is required` });
+    }
+
+    const existing = await Address.findOne({ _id: req.params.id, user: req.user.id });
+    if (!existing) {
+      return res.status(404).json({ message: 'Address not found' });
+    }
+
+    const shouldSetDefault = req.body.isDefault === true;
+    if (shouldSetDefault) {
+      await Address.updateMany({ user: req.user.id }, { $set: { isDefault: false } });
+      existing.isDefault = true;
+    }
+
+    existing.name = payload.name;
+    existing.phone = payload.phone;
+    existing.address = payload.address;
+    existing.city = payload.city;
+    existing.state = payload.state;
+    existing.pincode = payload.pincode;
+    await existing.save();
+
+    return res.json(existing);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
 };
 
 const deleteAddress = async (req, res) => {
-  res.json({ message: 'Address deleted', _id: req.params.id });
+  try {
+    const deleted = await Address.findOneAndDelete({ _id: req.params.id, user: req.user.id });
+    if (!deleted) {
+      return res.status(404).json({ message: 'Address not found' });
+    }
+
+    if (deleted.isDefault) {
+      const fallback = await Address.findOne({ user: req.user.id }).sort({ createdAt: -1 });
+      if (fallback) {
+        fallback.isDefault = true;
+        await fallback.save();
+      }
+    }
+
+    return res.json({ message: 'Address deleted', _id: req.params.id });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
 };
 
 const updateUserProfile = async (req, res) => {

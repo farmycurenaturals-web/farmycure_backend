@@ -188,6 +188,16 @@ const passwordResetTemplate = ({ resetLink, expiresInMinutes = 15 }) => ({
       )}" target="_blank" rel="noreferrer">${escapeHtml(resetLink)}</a></p>
     `,
   }),
+  text: [
+    `${BRAND} - Reset your password`,
+    '',
+    `We received a request to reset your password.`,
+    `This link is valid for ${expiresInMinutes} minutes.`,
+    '',
+    `Reset Password: ${resetLink}`,
+    '',
+    `If you did not request this, you can ignore this email.`,
+  ].join('\n'),
 });
 
 module.exports = {

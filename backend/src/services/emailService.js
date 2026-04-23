@@ -34,13 +34,23 @@ const sendEmail = async ({ to, subject, html, text, replyTo }) => {
     return { skipped: true };
   }
 
+  const fallbackText = text || String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const listUnsubscribe = process.env.MAIL_LIST_UNSUBSCRIBE || '';
+  const headers = {
+    'X-Auto-Response-Suppress': 'All',
+  };
+  if (listUnsubscribe) {
+    headers['List-Unsubscribe'] = listUnsubscribe;
+  }
+
   await tx.sendMail({
     from: `"FarmyCure Naturals" <${from}>`,
     to,
     subject,
     html,
-    text,
+    text: fallbackText,
     replyTo,
+    headers,
   });
   return { skipped: false };
 };
