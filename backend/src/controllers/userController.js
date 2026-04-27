@@ -3,6 +3,16 @@ const User = require('../models/User');
 const Order = require('../models/Order');
 const Address = require('../models/Address');
 
+const withLegacyStatus = (orderDocOrObject) => {
+  if (!orderDocOrObject) return orderDocOrObject;
+  const order =
+    typeof orderDocOrObject.toObject === 'function'
+      ? orderDocOrObject.toObject()
+      : { ...orderDocOrObject };
+  const resolvedStatus = String(order.orderStatus || order.status || '').trim();
+  return { ...order, status: resolvedStatus };
+};
+
 const sanitizeAddressPayload = (body = {}) => ({
   name: String(body.name || '').trim(),
   phone: String(body.phone || '').trim(),
@@ -15,7 +25,7 @@ const sanitizeAddressPayload = (body = {}) => ({
 const getUserOrders = async (req, res) => {
   try {
     const orders = await Order.find({ user: req.user.id }).populate('items.productId').sort({ createdAt: -1 });
-    res.json(orders);
+    res.json(orders.map((entry) => withLegacyStatus(entry)));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

@@ -5,9 +5,11 @@ require('dotenv').config({
 });
 const express = require('express');
 const cors = require('cors');
+const session = require('express-session');
 const mongoose = require('mongoose');
 const connectDB = require('./config/db');
 const dbReadyMiddleware = require('./middleware/dbReadyMiddleware');
+const { passport } = require('./config/passport');
 
 const authRoutes = require('./routes/authRoutes');
 const productRoutes = require('./routes/productRoutes');
@@ -23,6 +25,7 @@ const addressRoutes = require('./routes/addressRoutes');
 const healthRoutes = require('./routes/healthRoutes');
 
 const app = express();
+app.set('trust proxy', 1);
 
 const allowedOrigins = [
   'https://farmycure.com',
@@ -48,6 +51,21 @@ app.use(
 );
 app.use(express.json());
 app.use('/uploads', express.static('uploads'));
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || process.env.JWT_SECRET || 'farmycure_session_secret',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 24 * 60 * 60 * 1000,
+    },
+  })
+);
+app.use(passport.initialize());
+app.use(passport.session());
 
 connectDB();
 

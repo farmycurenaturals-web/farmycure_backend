@@ -1,13 +1,52 @@
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
 const User = require('../models/User');
-const PDFDocument = require('pdfkit');
 const { sendEmail } = require('../services/emailService');
-const { orderConfirmationTemplate, orderStatusTemplate } = require('../services/emailTemplates');
+const { orderStatusTemplate } = require('../services/emailTemplates');
+const { generateInvoicePdfBuffer, streamInvoicePdfToResponse } = require('../services/invoiceService');
+const { sendOrderEmailWithRetry, shouldSendOrderEmail } = require('../services/orderEmailService');
+
+const withLegacyStatus = (orderDocOrObject) => {
+  if (!orderDocOrObject) return orderDocOrObject;
+  const order =
+    typeof orderDocOrObject.toObject === 'function'
+      ? orderDocOrObject.toObject()
+      : { ...orderDocOrObject };
+  const resolvedStatus = String(order.orderStatus || order.status || '').trim();
+  return { ...order, status: resolvedStatus };
+};
+
+const queueOrderConfirmationEmail = ({ orderId, customerEmail }) => {
+  setImmediate(async () => {
+    try {
+      const orderForInvoice = await Order.findById(orderId)
+        .populate('items.productId', 'title name')
+        .populate('user', 'name');
+      if (!orderForInvoice) {
+        console.log('Order email skipped: order not found after creation', { orderId: String(orderId) });
+        return;
+      }
+      if (!shouldSendOrderEmail(orderForInvoice)) {
+        console.log('Order email skipped: payment status is pending or failed', {
+          orderId: String(orderId),
+          paymentStatus: orderForInvoice.paymentStatus || 'unknown',
+        });
+        return;
+      }
+      const pdfBuffer = await generateInvoicePdfBuffer(orderForInvoice);
+      await sendOrderEmailWithRetry(orderForInvoice, pdfBuffer, customerEmail, {
+        maxRetries: Number(process.env.ORDER_EMAIL_MAX_RETRIES || 1),
+        retryDelayMs: Number(process.env.ORDER_EMAIL_RETRY_DELAY_MS || 3000),
+      });
+    } catch (error) {
+      console.error('Queued order confirmation email failed:', error.message);
+    }
+  });
+};
 
 const createOrder = async (req, res) => {
   try {
-    const { shippingAddress } = req.body;
+    const { shippingAddress, paymentMethod, razorpay } = req.body;
     const userId = req.user.id;
 
     const cart = await Cart.findOne({ user: userId }).populate('items.productId');
@@ -21,6 +60,19 @@ const createOrder = async (req, res) => {
       0
     );
 
+    const normalizedPaymentMethod = String(paymentMethod || 'online').trim().toLowerCase();
+    const isCod = normalizedPaymentMethod === 'cod';
+    const finalPaymentMethod = isCod ? 'cod' : 'online';
+    const paymentStatus = isCod ? 'cod' : 'paid';
+
+    if (!isCod) {
+      const orderId = String(razorpay?.orderId || '').trim();
+      const paymentId = String(razorpay?.paymentId || '').trim();
+      if (!orderId || !paymentId) {
+        return res.status(400).json({ message: 'Online payment details are required' });
+      }
+    }
+
     const order = await Order.create({
       user: userId,
       items: cart.items.map(item => ({
@@ -30,29 +82,29 @@ const createOrder = async (req, res) => {
         price: item.price
       })),
       totalPrice,
-      shippingAddress
+      shippingAddress,
+      paymentMethod: finalPaymentMethod,
+      paymentStatus
     });
 
     await Cart.findOneAndDelete({ user: userId });
 
+    let emailQueued = false;
     try {
       const user = await User.findById(userId).select('name email');
       const customerEmail = shippingAddress?.email || user?.email;
       if (customerEmail) {
-        const mail = orderConfirmationTemplate({
-          customerName: shippingAddress?.fullName || user?.name,
-          orderId: order._id,
-          items: cart.items,
-          totalAmount: totalPrice,
-          deliveryAddress: shippingAddress,
-        });
-        await sendEmail({ to: customerEmail, subject: mail.subject, html: mail.html });
+        queueOrderConfirmationEmail({ orderId: order._id, customerEmail });
+        emailQueued = true;
       }
     } catch (mailError) {
-      console.error('Order confirmation email failed:', mailError.message);
+      console.error('Order confirmation email queue failed:', mailError.message);
     }
 
-    res.status(201).json(order);
+    res.status(201).json({
+      ...withLegacyStatus(order),
+      emailQueued,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -65,7 +117,7 @@ const getOrders = async (req, res) => {
         ? {}
         : { user: req.user.id };
     const orders = await Order.find(filter).populate('items.productId').sort({ createdAt: -1 });
-    res.json(orders);
+    res.json(orders.map((entry) => withLegacyStatus(entry)));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -75,7 +127,7 @@ const getOrderById = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id).populate('items.productId');
     if (order) {
-      res.json(order);
+      res.json(withLegacyStatus(order));
     } else {
       res.status(404).json({ message: 'Order not found' });
     }
@@ -88,7 +140,7 @@ const updateOrder = async (req, res) => {
   try {
     const order = await Order.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!order) return res.status(404).json({ message: 'Order not found' });
-    res.json(order);
+    res.json(withLegacyStatus(order));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -122,29 +174,10 @@ const updateOrderStatus = async (req, res) => {
       console.error('Order status email failed:', mailError.message);
     }
 
-    res.json(order);
+    res.json(withLegacyStatus(order));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
-};
-
-const formatCurrency = (value) => `INR ${Number(value || 0).toFixed(2)}`;
-
-const normalizeAddress = (address) => {
-  if (!address) return 'N/A';
-  if (typeof address === 'string') return address;
-  if (typeof address === 'object') {
-    const parts = [
-      address.fullName,
-      address.address,
-      [address.city, address.state].filter(Boolean).join(', '),
-      address.pincode,
-      address.phone && `Phone: ${address.phone}`,
-      address.email,
-    ].filter(Boolean);
-    return parts.join(', ') || 'N/A';
-  }
-  return 'N/A';
 };
 
 const generateOrderInvoice = async (req, res) => {
@@ -164,48 +197,8 @@ const generateOrderInvoice = async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    const doc = new PDFDocument({ margin: 50 });
     const fileName = `invoice-${order._id}.pdf`;
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-
-    doc.pipe(res);
-
-    doc.fontSize(20).text('FarmyCure Invoice', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(12);
-    doc.text(`Order ID: ${order._id}`);
-    doc.text(`Order Date: ${new Date(order.createdAt).toLocaleString()}`);
-    doc.text(`Customer Name: ${order.user?.name || 'N/A'}`);
-    doc.text(`Delivery Address: ${normalizeAddress(order.shippingAddress)}`);
-    doc.moveDown();
-
-    doc.fontSize(14).text('Products');
-    doc.moveDown(0.5);
-    doc.fontSize(11).text('Name', 50, doc.y, { continued: true, width: 240 });
-    doc.text('Quantity', 290, doc.y, { continued: true, width: 90 });
-    doc.text('Price', 380, doc.y, { align: 'right', width: 80 });
-    doc.moveDown(0.5);
-    doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
-    doc.moveDown(0.5);
-
-    (order.items || []).forEach((item) => {
-      const productName = item.productId?.title || item.productId?.name || 'Product';
-      doc.text(productName, 50, doc.y, { continued: true, width: 240 });
-      doc.text(String(item.quantity || 0), 290, doc.y, { continued: true, width: 90 });
-      doc.text(formatCurrency(item.price), 380, doc.y, { align: 'right', width: 80 });
-      doc.moveDown(0.4);
-    });
-
-    doc.moveDown();
-    doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
-    doc.moveDown(0.8);
-    doc.fontSize(13).text(`Total Amount: ${formatCurrency(order.totalPrice)}`, {
-      align: 'right',
-    });
-
-    doc.end();
+    await streamInvoicePdfToResponse(order, res, fileName);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
