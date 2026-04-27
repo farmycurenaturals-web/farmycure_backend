@@ -7,29 +7,35 @@ const toBool = (value) => String(value || '').toLowerCase() === 'true';
 const getTransporter = () => {
   if (transporter) return transporter;
 
-  const host = process.env.SMTP_HOST;
+  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
   const port = Number(process.env.SMTP_PORT || 587);
   const secure = toBool(process.env.SMTP_SECURE);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+  const user = process.env.SMTP_USER || process.env.EMAIL_USER;
+  const pass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
+  const service = process.env.SMTP_SERVICE || '';
 
   if (!host || !port || !user || !pass) {
     return null;
   }
 
-  transporter = nodemailer.createTransport({
+  const config = {
     host,
     port,
     secure,
     auth: { user, pass },
-  });
+  };
+  if (service) {
+    config.service = service;
+  }
+
+  transporter = nodemailer.createTransport(config);
 
   return transporter;
 };
 
-const sendEmail = async ({ to, subject, html, text, replyTo }) => {
+const sendEmail = async ({ to, subject, html, text, replyTo, attachments }) => {
   const tx = getTransporter();
-  const from = process.env.MAIL_FROM || process.env.SMTP_USER;
+  const from = process.env.MAIL_FROM || process.env.SMTP_USER || process.env.EMAIL_USER;
   if (!tx || !from) {
     return { skipped: true };
   }
@@ -43,16 +49,23 @@ const sendEmail = async ({ to, subject, html, text, replyTo }) => {
     headers['List-Unsubscribe'] = listUnsubscribe;
   }
 
-  await tx.sendMail({
-    from: `"FarmyCure Naturals" <${from}>`,
-    to,
-    subject,
-    html,
-    text: fallbackText,
-    replyTo,
-    headers,
-  });
-  return { skipped: false };
+  try {
+    const fromAddress = String(from).includes('<') ? from : `"FarmyCure Naturals" <${from}>`;
+    const info = await tx.sendMail({
+      from: fromAddress,
+      to,
+      subject,
+      html,
+      text: fallbackText,
+      replyTo,
+      attachments,
+      headers,
+    });
+    return { skipped: false, messageId: info?.messageId || '' };
+  } catch (error) {
+    console.log('Email sending:', error);
+    throw error;
+  }
 };
 
 const verifyEmailTransport = async () => {

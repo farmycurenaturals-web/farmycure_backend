@@ -21,6 +21,11 @@ const DEFAULT_FRONTEND_URL = 'http://localhost:5173';
 const getGoogleClientId = () =>
   String(process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID || '').trim();
 const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo';
+const getGoogleOauthClient = () => {
+  const googleClientId = getGoogleClientId();
+  if (!googleClientId) return null;
+  return new OAuth2Client(googleClientId);
+};
 const normalizeBaseUrl = (value) => String(value || '').trim().replace(/\/+$/, '');
 const getRequestOrigin = (req) => {
   const candidates = [
@@ -192,7 +197,10 @@ const googleLogin = async (req, res) => {
         message: 'Google auth is not configured. Set GOOGLE_CLIENT_ID in backend environment and restart server.',
       });
     }
-    const googleClient = new OAuth2Client(googleClientId);
+    const googleClient = getGoogleOauthClient();
+    if (!googleClient) {
+      return res.status(500).json({ message: 'Google auth is not configured' });
+    }
 
     const ticket = await googleClient.verifyIdToken({
       idToken: credential,
@@ -224,13 +232,27 @@ const googleTokenLogin = async (req, res) => {
       return res.status(400).json({ message: 'Google access token is required' });
     }
 
-    const profileResponse = await fetch(GOOGLE_USERINFO_URL, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!profileResponse.ok) {
+    const googleClient = getGoogleOauthClient();
+    if (!googleClient) {
+      return res.status(500).json({ message: 'Google auth is not configured' });
+    }
+
+    // Validate token first to ensure audience and scopes are correct.
+    const tokenInfo = await googleClient.getTokenInfo(accessToken);
+    const expectedAudience = getGoogleClientId();
+    const audience = String(tokenInfo?.aud || '').trim();
+    if (expectedAudience && audience && audience !== expectedAudience) {
       return res.status(401).json({ message: 'Google authentication failed' });
     }
-    const payload = await profileResponse.json();
+
+    const profileResponse = await googleClient.request({
+      url: GOOGLE_USERINFO_URL,
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const payload = profileResponse?.data || {};
+    if (!payload || typeof payload !== 'object') {
+      return res.status(401).json({ message: 'Google authentication failed' });
+    }
     const email = String(payload?.email || '').trim().toLowerCase();
     const emailVerified = Boolean(payload?.email_verified);
     const name = String(payload?.name || '').trim();
@@ -272,6 +294,7 @@ const logoutUser = async (req, res) => {
 const forgotPassword = async (req, res) => {
   try {
     const email = String(req.body.email || '').trim().toLowerCase();
+    console.log('Forgot password requested for:', email);
     if (!email || !email.includes('@')) {
       return res.status(400).json({ message: 'Valid email is required' });
     }
@@ -303,6 +326,7 @@ const forgotPassword = async (req, res) => {
     const resetLink = buildResetLink(req, rawToken);
     const mail = passwordResetTemplate({ resetLink, expiresInMinutes: RESET_TOKEN_EXPIRY_MINUTES });
     const sendResult = await sendEmail({ to: email, subject: mail.subject, html: mail.html });
+    console.log('Forgot password email delivery result:', sendResult);
 
     return res.json({
       message: 'If this email exists, reset instructions have been sent',
@@ -311,6 +335,7 @@ const forgotPassword = async (req, res) => {
       ...(sendResult?.skipped ? { resetLink } : {}),
     });
   } catch (error) {
+    console.log('Email sending:', error);
     return res.status(500).json({ message: error.message });
   }
 };
