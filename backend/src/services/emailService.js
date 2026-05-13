@@ -1,6 +1,6 @@
 const nodemailer = require('nodemailer');
 
-let transporter = null;
+let transporter = null; // cleared on server restart
 
 const toBool = (value) => String(value || '').toLowerCase() === 'true';
 
