@@ -221,6 +221,7 @@ const googleLogin = async (req, res) => {
     const token = signAccessToken(user);
     return res.json(authResponse(user, token));
   } catch (error) {
+    console.error('googleLogin (ID token) error:', error.message);
     return res.status(401).json({ message: 'Google authentication failed' });
   }
 };
@@ -232,42 +233,73 @@ const googleTokenLogin = async (req, res) => {
       return res.status(400).json({ message: 'Google access token is required' });
     }
 
-    const googleClient = getGoogleOauthClient();
-    if (!googleClient) {
-      return res.status(500).json({ message: 'Google auth is not configured' });
-    }
-
-    // Validate token first to ensure audience and scopes are correct.
-    const tokenInfo = await googleClient.getTokenInfo(accessToken);
     const expectedAudience = getGoogleClientId();
-    const audience = String(tokenInfo?.aud || '').trim();
-    if (expectedAudience && audience && audience !== expectedAudience) {
-      return res.status(401).json({ message: 'Google authentication failed' });
+    if (!expectedAudience) {
+      return res.status(500).json({
+        message: 'Google auth is not configured. Set GOOGLE_CLIENT_ID in backend environment.',
+      });
     }
 
-    const profileResponse = await googleClient.request({
-      url: GOOGLE_USERINFO_URL,
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    const payload = profileResponse?.data || {};
+    let audienceValid = false;
+    try {
+      const tokenInfoRes = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`
+      );
+      if (tokenInfoRes.ok) {
+        const tokenInfo = await tokenInfoRes.json();
+        const aud = String(tokenInfo.aud || '').trim();
+        const azp = String(tokenInfo.azp || '').trim();
+        audienceValid = aud === expectedAudience || azp === expectedAudience;
+        if (!audienceValid) {
+          console.error('Google token audience mismatch:', { aud, azp, expected: expectedAudience });
+          return res.status(401).json({ message: 'Google token audience mismatch' });
+        }
+      } else {
+        console.error('Google tokeninfo endpoint returned:', tokenInfoRes.status);
+        return res.status(401).json({ message: 'Google access token is invalid or expired' });
+      }
+    } catch (tokenInfoError) {
+      console.error('Google tokeninfo validation error:', tokenInfoError.message);
+      return res.status(401).json({ message: 'Failed to validate Google access token' });
+    }
+
+    let payload;
+    try {
+      const profileRes = await fetch(GOOGLE_USERINFO_URL, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!profileRes.ok) {
+        console.error('Google userinfo endpoint returned:', profileRes.status);
+        return res.status(401).json({ message: 'Failed to fetch Google profile' });
+      }
+      payload = await profileRes.json();
+    } catch (profileError) {
+      console.error('Google userinfo fetch error:', profileError.message);
+      return res.status(401).json({ message: 'Failed to fetch Google profile' });
+    }
+
     if (!payload || typeof payload !== 'object') {
-      return res.status(401).json({ message: 'Google authentication failed' });
+      return res.status(401).json({ message: 'Invalid response from Google' });
     }
-    const email = String(payload?.email || '').trim().toLowerCase();
-    const emailVerified = Boolean(payload?.email_verified);
-    const name = String(payload?.name || '').trim();
-    const picture = String(payload?.picture || '').trim();
-    const googleId = String(payload?.sub || '').trim();
+    const email = String(payload.email || '').trim().toLowerCase();
+    const emailVerified = Boolean(payload.email_verified);
+    const name = String(payload.name || '').trim();
+    const picture = String(payload.picture || '').trim();
+    const googleId = String(payload.sub || '').trim();
 
-    if (!email || !googleId || !emailVerified) {
-      return res.status(400).json({ message: 'Invalid Google account data' });
+    if (!email || !googleId) {
+      return res.status(400).json({ message: 'Google account is missing email or ID' });
+    }
+    if (!emailVerified) {
+      return res.status(400).json({ message: 'Google email is not verified' });
     }
 
     const user = await findOrCreateGoogleUser({ email, name, picture, googleId });
     const token = signAccessToken(user);
     return res.json(authResponse(user, token));
   } catch (error) {
-    return res.status(401).json({ message: 'Google authentication failed' });
+    console.error('googleTokenLogin unexpected error:', error);
+    return res.status(500).json({ message: 'Google authentication failed unexpectedly' });
   }
 };
 

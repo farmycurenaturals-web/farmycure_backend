@@ -5,9 +5,14 @@ const User = require('../models/User');
 
 const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || '').trim();
 const GOOGLE_CLIENT_SECRET = String(process.env.GOOGLE_CLIENT_SECRET || '').trim();
-const GOOGLE_CALLBACK_URL = String(
-  process.env.GOOGLE_CALLBACK_URL || process.env.GOOGLE_REDIRECT_URI || '/api/auth/google/callback'
-).trim();
+const deriveCallbackUrl = () => {
+  const explicit = String(process.env.GOOGLE_CALLBACK_URL || process.env.GOOGLE_REDIRECT_URI || '').trim();
+  if (explicit) return explicit;
+  const baseUrl = String(process.env.BASE_URL || '').trim().replace(/\/+$/, '');
+  if (baseUrl) return `${baseUrl}/api/auth/google/callback`;
+  return '/api/auth/google/callback';
+};
+const GOOGLE_CALLBACK_URL = deriveCallbackUrl();
 const hasGoogleOauthConfig = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
 
 const findOrCreateGoogleUser = async ({ email, name, picture, googleId }) => {
