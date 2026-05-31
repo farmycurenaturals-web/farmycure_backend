@@ -25,11 +25,29 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => cb(null, `${Date.now()}${path.extname(file.originalname)}`),
 });
-const upload = multer({ storage });
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+});
+
+const uploadSingleImage = (req, res, next) => {
+  upload.single('image')(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'Image must be 10MB or smaller' });
+      }
+      return res.status(400).json({ message: err.message });
+    } else if (err) {
+      return res.status(500).json({ message: err.message });
+    }
+    next();
+  });
+};
 
 router.get('/', getCategories);
-router.post('/', authMiddleware, upload.single('image'), createCategory);
-router.put('/:id', authMiddleware, upload.single('image'), updateCategory);
+router.post('/', authMiddleware, uploadSingleImage, createCategory);
+router.put('/:id', authMiddleware, uploadSingleImage, updateCategory);
 router.delete('/:id', authMiddleware, deleteCategory);
 
 module.exports = router;

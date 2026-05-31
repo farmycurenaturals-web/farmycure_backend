@@ -89,7 +89,9 @@ const normalizeImageHost = (value = '') => {
   const image = String(value || '').trim();
   if (!image) return '';
   if (!process.env.BASE_URL) return image;
-  return image.replace(/^https?:\/\/localhost:5000/i, process.env.BASE_URL);
+  return image
+    .replace(/^https?:\/\/localhost:5000/i, process.env.BASE_URL)
+    .replace(/^https?:\/\/api\.farmycure\.com/i, process.env.BASE_URL);
 };
 
 const normalizeVariantsFromAnyShape = (rawVariants = []) => {

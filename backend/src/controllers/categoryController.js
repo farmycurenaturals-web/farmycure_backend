@@ -8,10 +8,27 @@ const normalizeSlug = (value = '') =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)+/g, '');
 
+const normalizeImageHost = (value = '') => {
+  const image = String(value || '').trim();
+  if (!image) return '';
+  if (!process.env.BASE_URL) return image;
+  return image
+    .replace(/^https?:\/\/localhost:5000/i, process.env.BASE_URL)
+    .replace(/^https?:\/\/api\.farmycure\.com/i, process.env.BASE_URL);
+};
+
+const normalizeCategoryDocument = (cat) => {
+  const plain = typeof cat?.toObject === 'function' ? cat.toObject() : { ...(cat || {}) };
+  return {
+    ...plain,
+    image: normalizeImageHost(plain.image || ''),
+  };
+};
+
 const getCategories = async (req, res) => {
   try {
     const categories = await Category.find({}).sort({ createdAt: -1 });
-    res.json(categories);
+    res.json(categories.map(normalizeCategoryDocument));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -43,7 +60,7 @@ const createCategory = async (req, res) => {
       description: String(description || '').trim(),
       image,
     });
-    res.status(201).json(category);
+    res.status(201).json(normalizeCategoryDocument(category));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -78,7 +95,7 @@ const updateCategory = async (req, res) => {
     category.image = image;
     await category.save();
 
-    res.json(category);
+    res.json(normalizeCategoryDocument(category));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
